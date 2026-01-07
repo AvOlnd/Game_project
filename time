@@ -1,0 +1,19 @@
+    def setup(self):
+        self.total_time = 0.0
+
+    def on_draw(self):
+        self.clear()
+        self.batch.draw()
+
+    def on_update(self, delta_time):
+        self.total_time += delta_time
+        self.batch = Batch()
+        self.fonts = arcade.Text(
+            f"Время: {self.total_time:.2f} сек",
+            10,
+            30,
+            arcade.color.BLACK,
+            16,
+            batch=self.batch
+        )
+#код для отображения времени
