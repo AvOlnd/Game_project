@@ -1,0 +1,9 @@
+def on_draw(self):
+        self.clear()
+        self.world_camera.use()
+        self.walls.draw()
+        self.platforms.draw()
+        self.hazards.draw()
+        self.player_list.draw()
+        self.gui_camera.use()
+        self.batch.draw()
