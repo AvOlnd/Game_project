@@ -1,7 +1,3 @@
-"""
-КОСМИЧЕСКИЙ ЗАЩИТНИК - Исправленная версия с рабочей кнопкой
-"""
-
 import tkinter as tk
 import random
 import math
@@ -107,16 +103,13 @@ class Game:
         self.in_menu = False
         self.game_active = True
         self.game_over = False
-        
         self.player_x = SCREEN_WIDTH // 2
         self.player_y = SCREEN_HEIGHT - 100
         self.player_health = self.player_max_health
         self.player_invulnerable = 0
-        
         self.bullets = []
         self.asteroids = []
         self.particles = []
-        
         self.score = 0
         self.level = 1
         self.game_time = 0
