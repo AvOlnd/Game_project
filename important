@@ -1,0 +1,16 @@
+if self.keys_pressed["left"] and self.player_x > self.player_width//2:
+    self.player_x -= PLAYER_SPEED
+if self.keys_pressed["right"] and self.player_x < SCREEN_WIDTH - self.player_width//2:
+    self.player_x += PLAYER_SPEED
+
+for bullet in self.bullets[:]:
+    bullet["y"] -= bullet["speed"]
+    if bullet["y"] < -20:
+        self.bullets.remove(bullet)
+
+for asteroid in self.asteroids[:]:
+    asteroid["x"] += asteroid["speed_x"]
+    asteroid["y"] += asteroid["speed_y"]
+    
+    if asteroid["y"] > SCREEN_HEIGHT + 100:
+        self.asteroids.remove(asteroid)
