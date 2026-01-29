@@ -1,0 +1,515 @@
+import tkinter as tk
+import random
+import math
+import time
+import json
+import os
+
+SCREEN_WIDTH = 1000
+SCREEN_HEIGHT = 700
+PLAYER_SPEED = 8
+BULLET_SPEED = 12
+
+class Game:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("КОСМИЧЕСКИЙ ЗАЩИТНИК")
+        self.root.geometry(f"{SCREEN_WIDTH}x{SCREEN_HEIGHT}")
+        
+        self.high_score = self.load_high_score()
+        
+        self.main_frame = tk.Frame(self.root)
+        self.main_frame.pack(fill="both", expand=True)
+        
+        self.canvas = tk.Canvas(self.main_frame, width=SCREEN_WIDTH, height=SCREEN_HEIGHT, bg="black")
+        self.canvas.pack()
+        
+        self.player_x = SCREEN_WIDTH // 2
+        self.player_y = SCREEN_HEIGHT - 100
+        self.player_width = 50
+        self.player_height = 35
+        self.player_health = 100
+        self.player_max_health = 100
+        self.player_invulnerable = 0
+        
+        self.bullets = []
+        self.asteroids = []
+        self.particles = []
+        self.powerups = []
+        
+        self.score = 0
+        self.level = 1
+        self.game_time = 0
+        self.asteroids_destroyed = 0
+        
+        self.in_menu = True
+        self.game_active = False
+        self.game_over = False
+        
+        self.shoot_timer = 0
+        self.shoot_delay = 10  
+        self.can_shoot = True
+        
+        self.keys_pressed = {
+            "left": False,
+            "right": False,
+            "space": False
+        }
+        
+        self.start_button = tk.Button(self.main_frame, 
+                                     text="НАЧАТЬ ИГРУ", 
+                                     font=("Arial", 20, "bold"),
+                                     bg="green", fg="white",
+                                     command=self.start_game,
+                                     cursor="hand2")
+        
+        self.restart_button = None
+        self.menu_button = None
+        
+        self.root.bind("<KeyPress>", self.on_key_press)
+        self.root.bind("<KeyRelease>", self.on_key_release)
+        
+        self.show_menu()
+        
+        self.game_loop()
+        
+    def load_high_score(self):
+        try:
+            if os.path.exists("high_score.json"):
+                with open("high_score.json", "r") as f:
+                    data = json.load(f)
+                    return data.get("high_score", 0)
+        except:
+            pass
+        return 0
+    
+    def save_high_score(self):
+        """Сохранение рекорда в файл"""
+        if self.score > self.high_score:
+            self.high_score = self.score
+            try:
+                with open("high_score.json", "w") as f:
+                    json.dump({"high_score": self.high_score}, f)
+            except:
+                pass
+    
+    def show_menu(self):
+        """Показать главное меню"""
+        self.in_menu = True
+        self.game_active = False
+        self.game_over = False
+        
+        # Удаляем кнопки если они есть
+        if self.restart_button:
+            self.restart_button.place_forget()
+        if self.menu_button:
+            self.menu_button.place_forget()
+        
+        self.canvas.delete("all")
+        
+        self.draw_stars()
+        
+        self.canvas.create_text(SCREEN_WIDTH // 2, 150, 
+                               text="КОСМИЧЕСКИЙ ЗАЩИТНИК", 
+                               font=("Arial", 48, "bold"),
+                               fill="cyan")
+        
+        self.canvas.create_text(SCREEN_WIDTH // 2, 220,
+                               text="Защищайте Землю от астероидов!",
+                               font=("Arial", 24),
+                               fill="yellow")
+        
+        self.canvas.create_text(SCREEN_WIDTH // 2, 270,
+                               text=f"РЕКОРД: {self.high_score}",
+                               font=("Arial", 28, "bold"),
+                               fill="gold")
+        
+        controls = [
+            "УПРАВЛЕНИЕ:",
+            "← → - Движение влево/вправо",
+            "ПРОБЕЛ - Стрельба",
+            "ESC - Выход в меню"
+        ]
+        
+        for i, text in enumerate(controls):
+            self.canvas.create_text(SCREEN_WIDTH // 2, 330 + i*30,
+                                   text=text,
+                                   font=("Arial", 18),
+                                   fill="white")
+        
+        if not hasattr(self, 'start_button') or self.start_button is None:
+            self.start_button = tk.Button(self.main_frame, 
+                                         text="НАЧАТЬ ИГРУ", 
+                                         font=("Arial", 20, "bold"),
+                                         bg="green", fg="white",
+                                         command=self.start_game,
+                                         cursor="hand2")
+        
+        self.start_button.place(x=SCREEN_WIDTH//2 - 100, y=500, width=200, height=50)
+        
+    def start_game(self):
+        """Начало новой игры"""
+        print("Кнопка нажата! Игра начинается...") 
+        
+        self.start_button.place_forget()
+        
+        self.in_menu = False
+        self.game_active = True
+        self.game_over = False
+        
+        self.player_x = SCREEN_WIDTH // 2
+        self.player_y = SCREEN_HEIGHT - 100
+        self.player_health = self.player_max_health
+        self.player_invulnerable = 0
+        
+        self.bullets = []
+        self.asteroids = []
+        self.particles = []
+        self.powerups = []
+        
+        self.score = 0
+        self.level = 1
+        self.game_time = 0
+        self.asteroids_destroyed = 0
+        self.shoot_timer = 0
+        self.can_shoot = True
+        
+        self.canvas.delete("all")
+        
+    def on_key_press(self, event):
+        """Обработка нажатия клавиш"""
+        if not self.game_active:
+            return
+            
+        if event.keysym == "Left":
+            self.keys_pressed["left"] = True
+        elif event.keysym == "Right":
+            self.keys_pressed["right"] = True
+        elif event.keysym == "space":
+            self.keys_pressed["space"] = True
+        elif event.keysym == "Escape":
+            self.show_menu()
+            
+    def on_key_release(self, event):
+        """Обработка отпускания клавиш"""
+        if not self.game_active:
+            return
+            
+        if event.keysym == "Left":
+            self.keys_pressed["left"] = False
+        elif event.keysym == "Right":
+            self.keys_pressed["right"] = False
+        elif event.keysym == "space":
+            self.keys_pressed["space"] = False
+            self.can_shoot = True  
+    
+    def draw_stars(self):
+        """Рисование фоновых звезд"""
+        self.canvas.delete("stars")
+        for _ in range(100):
+            x = random.randint(0, SCREEN_WIDTH)
+            y = random.randint(0, SCREEN_HEIGHT)
+            size = random.randint(1, 3)
+            brightness = random.randint(100, 255)
+            color = f"#{brightness:02x}{brightness:02x}{brightness:02x}"
+            self.canvas.create_oval(x-size, y-size, x+size, y+size, 
+                                   fill=color, outline=color, tags="stars")
+    
+    def game_loop(self):
+        """Основной игровой цикл"""
+        if self.game_active:
+            self.update_game()
+            self.draw_game()
+        elif self.in_menu:
+            pass
+        elif self.game_over:
+            self.draw_game_over()
+        
+        self.root.after(16, self.game_loop)
+    
+    def update_game(self):
+        """Обновление игровой логики"""
+        if self.keys_pressed["left"] and self.player_x > self.player_width//2:
+            self.player_x -= PLAYER_SPEED
+        if self.keys_pressed["right"] and self.player_x < SCREEN_WIDTH - self.player_width//2:
+            self.player_x += PLAYER_SPEED
+        
+        if self.player_invulnerable > 0:
+            self.player_invulnerable -= 1
+        
+        if self.keys_pressed["space"] and self.can_shoot:
+            if len(self.bullets) < 15:  
+                self.bullets.append({
+                    "x": self.player_x,
+                    "y": self.player_y - self.player_height//2,
+                    "speed": BULLET_SPEED
+                })
+                self.can_shoot = False
+                self.shoot_timer = self.shoot_delay
+        
+
+        if not self.can_shoot:
+            self.shoot_timer -= 1
+            if self.shoot_timer <= 0:
+                self.can_shoot = True
+        
+        for bullet in self.bullets[:]:
+            bullet["y"] -= bullet["speed"]
+            if bullet["y"] < -20:
+                self.bullets.remove(bullet)
+        
+        if random.random() < 0.02 + self.level * 0.005:
+            self.asteroids.append({
+                "x": random.randint(50, SCREEN_WIDTH - 50),
+                "y": -50,
+                "size": random.randint(30, 60),
+                "speed_x": random.uniform(-2, 2),
+                "speed_y": random.uniform(2, 4),
+                "health": 2
+            })
+        
+        for asteroid in self.asteroids[:]:
+            asteroid["x"] += asteroid["speed_x"]
+            asteroid["y"] += asteroid["speed_y"]
+            
+            if asteroid["y"] > SCREEN_HEIGHT + 100:
+                self.asteroids.remove(asteroid)
+                continue
+            
+            # Столкновение с игроком
+            if self.player_invulnerable <= 0:
+                distance = math.sqrt((asteroid["x"] - self.player_x)**2 + 
+                                   (asteroid["y"] - self.player_y)**2)
+                if distance < (asteroid["size"]//2 + self.player_width//2):
+                    self.player_health -= 20
+                    self.player_invulnerable = 60
+                    self.asteroids.remove(asteroid)
+                    
+                    # Создание частиц при столкновении
+                    for _ in range(10):
+                        self.particles.append({
+                            "x": asteroid["x"],
+                            "y": asteroid["y"],
+                            "vx": random.uniform(-3, 3),
+                            "vy": random.uniform(-3, 3),
+                            "size": random.randint(2, 5),
+                            "color": "red",
+                            "life": 0.7,
+                            "age": 0
+                        })
+        
+        # Проверка столкновений пуль с астероидами
+        for bullet in self.bullets[:]:
+            for asteroid in self.asteroids[:]:
+                distance = math.sqrt((bullet["x"] - asteroid["x"])**2 + 
+                                   (bullet["y"] - asteroid["y"])**2)
+                if distance < asteroid["size"]//2:
+                    if bullet in self.bullets:
+                        self.bullets.remove(bullet)
+                    asteroid["health"] -= 1
+                    
+                    if asteroid["health"] <= 0:
+                        self.score += 10
+                        self.asteroids_destroyed += 1
+                        self.asteroids.remove(asteroid)
+                        
+                        # Создание частиц при уничтожении астероида
+                        for _ in range(15):
+                            self.particles.append({
+                                "x": asteroid["x"],
+                                "y": asteroid["y"],
+                                "vx": random.uniform(-4, 4),
+                                "vy": random.uniform(-4, 4),
+                                "size": random.randint(3, 6),
+                                "color": "orange",
+                                "life": 1.0,
+                                "age": 0
+                            })
+                    break
+        
+        # Обновление частиц
+        for particle in self.particles[:]:
+            particle["x"] += particle["vx"]
+            particle["y"] += particle["vy"]
+            particle["age"] += 0.016
+            
+            if particle["age"] >= particle["life"]:
+                self.particles.remove(particle)
+        
+        # Увеличение уровня со временем
+        self.game_time += 0.016
+        self.level = 1 + int(self.game_time // 30)
+        
+        # Проверка окончания игры
+        if self.player_health <= 0:
+            self.game_active = False
+            self.game_over = True
+            self.save_high_score()
+    
+    def draw_game(self):
+        """Отрисовка игры"""
+        self.canvas.delete("all")
+        
+        self.draw_stars()
+        
+        # Рисование игрока
+        color = "cyan" if (self.player_invulnerable > 0 and self.player_invulnerable % 10 < 5) else "blue"
+        points = [
+            self.player_x, self.player_y - self.player_height//2,
+            self.player_x - self.player_width//2, self.player_y + self.player_height//2,
+            self.player_x + self.player_width//2, self.player_y + self.player_height//2
+        ]
+        self.canvas.create_polygon(points, fill=color, outline="white", width=2)
+
+        # Рисование пуль
+        for bullet in self.bullets:
+            self.canvas.create_rectangle(
+                bullet["x"] - 3, bullet["y"] - 10,
+                bullet["x"] + 3, bullet["y"] + 10,
+                fill="yellow", outline="orange"
+            )
+
+        # Рисование астероидов
+        for asteroid in self.asteroids:
+            self.canvas.create_oval(
+                asteroid["x"] - asteroid["size"]//2, asteroid["y"] - asteroid["size"]//2,
+                asteroid["x"] + asteroid["size"]//2, asteroid["y"] + asteroid["size"]//2,
+                fill="gray", outline="white"
+            )
+
+        # Рисование частиц
+        for particle in self.particles:
+            alpha = int(255 * (1 - particle["age"] / particle["life"]))
+            if alpha > 0:
+                color = particle["color"]
+                if color == "orange":
+                    r, g, b = 255, 165, 0
+                else:  # red
+                    r, g, b = 255, 50, 50
+                
+                r = int(r * alpha / 255)
+                g = int(g * alpha / 255)
+                b = int(b * alpha / 255)
+                color_str = f"#{r:02x}{g:02x}{b:02x}"
+                
+                self.canvas.create_oval(
+                    particle["x"] - particle["size"], particle["y"] - particle["size"],
+                    particle["x"] + particle["size"], particle["y"] + particle["size"],
+                    fill=color_str, outline=""
+                )
+        
+        # Интерфейс
+        # Здоровье
+        health_width = 300 * (self.player_health / self.player_max_health)
+        self.canvas.create_rectangle(50, 30, 350, 55, fill="darkred", outline="")
+        self.canvas.create_rectangle(50, 30, 50 + health_width, 55, fill="green", outline="")
+        self.canvas.create_rectangle(50, 30, 350, 55, outline="white", width=2)
+        
+        self.canvas.create_text(200, 43, text=f"ЗДОРОВЬЕ: {self.player_health}", 
+                               font=("Arial", 14, "bold"), fill="white")
+        
+        # Счет и рекорд
+        self.canvas.create_text(SCREEN_WIDTH - 150, 30, text=f"СЧЁТ: {self.score}", 
+                               font=("Arial", 20, "bold"), fill="white")
+        
+        self.canvas.create_text(SCREEN_WIDTH - 150, 60, text=f"РЕКОРД: {self.high_score}", 
+                               font=("Arial", 16, "bold"), fill="gold")
+        
+        # Уровень и статистика
+        self.canvas.create_text(SCREEN_WIDTH // 2, 30, text=f"УРОВЕНЬ: {self.level}", 
+                               font=("Arial", 20, "bold"), fill="cyan")
+        
+        minutes = int(self.game_time) // 60
+        seconds = int(self.game_time) % 60
+        self.canvas.create_text(SCREEN_WIDTH // 2, 60, 
+                               text=f"ВРЕМЯ: {minutes:02d}:{seconds:02d} | АСТЕРОИДОВ: {self.asteroids_destroyed}", 
+                               font=("Arial", 14), fill="white")
+        
+        # Предупреждение о низком здоровье
+        if self.player_health < 30:
+            flash = int(time.time() * 5) % 2
+            if flash:
+                self.canvas.create_text(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, 
+                                       text="ОПАСНО! НИЗКОЕ ЗДОРОВЬЕ!", 
+                                       font=("Arial", 24, "bold"), fill="red")
+    
+    def draw_game_over(self):
+        """Отрисовка экрана окончания игры"""
+        self.canvas.delete("all")
+        
+        self.draw_stars()
+        
+        # Полупрозрачный фон
+        self.canvas.create_rectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 
+                                   fill="black", stipple="gray50")
+        
+        # Анимация падающих букв
+        for i in range(20):
+            x = random.randint(0, SCREEN_WIDTH)
+            y = random.randint(0, SCREEN_HEIGHT)
+            size = random.randint(20, 40)
+            self.canvas.create_text(x, y, text="✸", 
+                                  font=("Arial", size), fill="cyan", 
+                                  tags="falling_star")
+        
+        # Основной текст
+        self.canvas.create_text(SCREEN_WIDTH // 2, 180, text="ИГРА ОКОНЧЕНА", 
+                               font=("Arial", 48, "bold"), fill="red")
+        
+        self.canvas.create_text(SCREEN_WIDTH // 2, 250, text=f"ВАШ СЧЁТ: {self.score}", 
+                               font=("Arial", 36), fill="white")
+        
+        # Проверка нового рекорда
+        if self.score > self.high_score:
+            self.canvas.create_text(SCREEN_WIDTH // 2, 300, 
+                                   text="НОВЫЙ РЕКОРД!", 
+                                   font=("Arial", 32, "bold"), 
+                                   fill="gold")
+        
+        # Статистика
+        stats = [
+            f"Уничтожено астероидов: {self.asteroids_destroyed}",
+            f"Прожито времени: {int(self.game_time)} сек",
+            f"Достигнутый уровень: {self.level}"
+        ]
+        
+        for i, stat in enumerate(stats):
+            self.canvas.create_text(SCREEN_WIDTH // 2, 350 + i*30,
+                                   text=stat,
+                                   font=("Arial", 18),
+                                   fill="lightblue")
+        
+        # Кнопки (создаем один раз)
+        if not self.restart_button:
+            self.restart_button = tk.Button(self.main_frame, 
+                                           text="НОВАЯ ИГРА", 
+                                           font=("Arial", 20, "bold"),
+                                           bg="green", fg="white",
+                                           command=self.start_game,
+                                           cursor="hand2")
+        
+        if not self.menu_button:
+            self.menu_button = tk.Button(self.main_frame, 
+                                        text="В МЕНЮ", 
+                                        font=("Arial", 16),
+                                        bg="blue", fg="white",
+                                        command=self.show_menu,
+                                        cursor="hand2")
+        
+        self.restart_button.place(x=SCREEN_WIDTH//2 - 100, y=450, width=200, height=50)
+        self.menu_button.place(x=SCREEN_WIDTH//2 - 100, y=520, width=200, height=40)
+    
+    def run(self):
+        """Запуск игры"""
+        self.root.mainloop()
+
+if __name__ == "__main__":
+    print("=" * 50)
+    print("Управление:")
+    print("1. Нажмите на кнопку 'НАЧАТЬ ИГРУ'")
+    print("2. Управление: ← → для движения, ПРОБЕЛ для стрельбы")
+    print("3. ESC для выхода в меню")
+    print("=" * 50)
+    
+    game = Game()
+    game.run()
