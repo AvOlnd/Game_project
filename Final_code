@@ -1,515 +1,598 @@
-import tkinter as tk
+import arcade
 import random
 import math
-import time
 import json
 import os
 
+
 SCREEN_WIDTH = 1000
 SCREEN_HEIGHT = 700
+SCREEN_TITLE = "КОСМИЧЕСКИЙ ЗАЩИТНИК"
 PLAYER_SPEED = 8
 BULLET_SPEED = 12
+MAX_BULLETS = 15
+SHOOT_DELAY = 0.1
+STAR_SPEED = 5  
 
-class Game:
+
+class Particle:
+    def __init__(self, x, y, vx, vy, size, color, life):
+        self.x = x
+        self.y = y
+        self.vx = vx
+        self.vy = vy
+        self.size = size
+        self.color = color
+        self.life = life
+        self.age = 0
+
+
+    def update(self, delta_time):
+        self.x += self.vx
+        self.y += self.vy
+        self.age += delta_time
+
+
+    def is_alive(self):
+        return self.age < self.life
+
+
+    def draw(self):
+        alpha = int(255 * (1 - self.age / self.life))
+        arcade.draw_circle_filled(self.x, self.y, self.size, (*self.color, alpha))
+
+
+class Asteroid:
+    def __init__(self, x, y, size, speed_x, speed_y):
+        self.x = x
+        self.y = y
+        self.size = size
+        self.speed_x = speed_x
+        self.speed_y = speed_y
+        self.health = 2
+
+
+    def update(self):
+        self.x += self.speed_x
+        self.y += self.speed_y
+
+
+    def draw(self):
+        arcade.draw_circle_filled(self.x, self.y, self.size, arcade.color.GRAY)
+        arcade.draw_circle_outline(self.x, self.y, self.size, arcade.color.WHITE, 2)
+
+    def collides_with(self, other_x, other_y, radius):
+        dx = self.x - other_x
+        dy = self.y - other_y
+        return dx * dx + dy * dy < (self.size + radius) ** 2
+
+
+class Bullet:
+    def __init__(self, x, y, speed):
+        self.x = x
+        self.y = y
+        self.speed = speed
+
+
+    def update(self):
+        self.y += self.speed
+
+
+    def draw(self):
+        left = self.x - 3
+        right = self.x + 3
+        bottom = self.y - 10
+        top = self.y + 10
+        arcade.draw_lrbt_rectangle_filled(left, right, bottom, top, arcade.color.YELLOW)
+        arcade.draw_lrbt_rectangle_outline(left, right, bottom, top, arcade.color.ORANGE, 1)
+
+
+class Star:
+    def __init__(self, x, y, size, color, twinkle_speed, twinkle_offset):
+        self.x = x
+        self.y = y
+        self.size = size
+        self.color = color
+        self.twinkle_speed = twinkle_speed
+        self.twinkle_offset = twinkle_offset
+
+
+    def draw(self, time):
+        brightness = 0.5 + 0.5 * math.sin(time * self.twinkle_speed + self.twinkle_offset)
+        alpha = int(150 + 105 * brightness)
+        arcade.draw_circle_filled(self.x, self.y, self.size, (*self.color, alpha))
+
+
+class SpaceDefender(arcade.Window):
     def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("КОСМИЧЕСКИЙ ЗАЩИТНИК")
-        self.root.geometry(f"{SCREEN_WIDTH}x{SCREEN_HEIGHT}")
-        
+        super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE)
+        self.game_state = "MENU"
         self.high_score = self.load_high_score()
-        
-        self.main_frame = tk.Frame(self.root)
-        self.main_frame.pack(fill="both", expand=True)
-        
-        self.canvas = tk.Canvas(self.main_frame, width=SCREEN_WIDTH, height=SCREEN_HEIGHT, bg="black")
-        self.canvas.pack()
-        
+
         self.player_x = SCREEN_WIDTH // 2
-        self.player_y = SCREEN_HEIGHT - 100
+        self.player_y = 100
         self.player_width = 50
         self.player_height = 35
         self.player_health = 100
         self.player_max_health = 100
         self.player_invulnerable = 0
-        
+
         self.bullets = []
         self.asteroids = []
         self.particles = []
-        self.powerups = []
-        
+        self.stars = []
+
         self.score = 0
         self.level = 1
         self.game_time = 0
         self.asteroids_destroyed = 0
-        
-        self.in_menu = True
-        self.game_active = False
-        self.game_over = False
-        
+
         self.shoot_timer = 0
-        self.shoot_delay = 10  
         self.can_shoot = True
-        
-        self.keys_pressed = {
-            "left": False,
-            "right": False,
-            "space": False
-        }
-        
-        self.start_button = tk.Button(self.main_frame, 
-                                     text="НАЧАТЬ ИГРУ", 
-                                     font=("Arial", 20, "bold"),
-                                     bg="green", fg="white",
-                                     command=self.start_game,
-                                     cursor="hand2")
-        
-        self.restart_button = None
-        self.menu_button = None
-        
-        self.root.bind("<KeyPress>", self.on_key_press)
-        self.root.bind("<KeyRelease>", self.on_key_release)
-        
-        self.show_menu()
-        
-        self.game_loop()
-        
+
+        self.left_pressed = False
+        self.right_pressed = False
+        self.space_pressed = False
+
+        self.setup()
+
+
     def load_high_score(self):
         try:
             if os.path.exists("high_score.json"):
                 with open("high_score.json", "r") as f:
                     data = json.load(f)
                     return data.get("high_score", 0)
-        except:
-            pass
+        except Exception as e:
+            print(f"Ошибка загрузки рекорда: {e}")
         return 0
-    
+
+
     def save_high_score(self):
-        """Сохранение рекорда в файл"""
         if self.score > self.high_score:
             self.high_score = self.score
             try:
                 with open("high_score.json", "w") as f:
                     json.dump({"high_score": self.high_score}, f)
-            except:
-                pass
-    
-    def show_menu(self):
-        """Показать главное меню"""
-        self.in_menu = True
-        self.game_active = False
-        self.game_over = False
-        
-        # Удаляем кнопки если они есть
-        if self.restart_button:
-            self.restart_button.place_forget()
-        if self.menu_button:
-            self.menu_button.place_forget()
-        
-        self.canvas.delete("all")
-        
-        self.draw_stars()
-        
-        self.canvas.create_text(SCREEN_WIDTH // 2, 150, 
-                               text="КОСМИЧЕСКИЙ ЗАЩИТНИК", 
-                               font=("Arial", 48, "bold"),
-                               fill="cyan")
-        
-        self.canvas.create_text(SCREEN_WIDTH // 2, 220,
-                               text="Защищайте Землю от астероидов!",
-                               font=("Arial", 24),
-                               fill="yellow")
-        
-        self.canvas.create_text(SCREEN_WIDTH // 2, 270,
-                               text=f"РЕКОРД: {self.high_score}",
-                               font=("Arial", 28, "bold"),
-                               fill="gold")
-        
-        controls = [
-            "УПРАВЛЕНИЕ:",
-            "← → - Движение влево/вправо",
-            "ПРОБЕЛ - Стрельба",
-            "ESC - Выход в меню"
-        ]
-        
-        for i, text in enumerate(controls):
-            self.canvas.create_text(SCREEN_WIDTH // 2, 330 + i*30,
-                                   text=text,
-                                   font=("Arial", 18),
-                                   fill="white")
-        
-        if not hasattr(self, 'start_button') or self.start_button is None:
-            self.start_button = tk.Button(self.main_frame, 
-                                         text="НАЧАТЬ ИГРУ", 
-                                         font=("Arial", 20, "bold"),
-                                         bg="green", fg="white",
-                                         command=self.start_game,
-                                         cursor="hand2")
-        
-        self.start_button.place(x=SCREEN_WIDTH//2 - 100, y=500, width=200, height=50)
-        
+            except Exception as e:
+                print(f"Ошибка сохранения рекорда: {e}")
+
+
+    def setup(self):
+        self.stars = []
+        for _ in range(200):
+            star = Star(
+                random.uniform(0, SCREEN_WIDTH),
+                random.uniform(0, SCREEN_HEIGHT),
+                random.uniform(1, 3),
+                (255, 255, 255),
+                random.uniform(1, 3),
+                random.uniform(0, 6.28)
+            )
+            self.stars.append(star)
+        arcade.set_background_color(arcade.color.BLACK)
+
+
     def start_game(self):
-        """Начало новой игры"""
-        print("Кнопка нажата! Игра начинается...") 
-        
-        self.start_button.place_forget()
-        
-        self.in_menu = False
-        self.game_active = True
-        self.game_over = False
-        
+        self.game_state = "PLAYING"
         self.player_x = SCREEN_WIDTH // 2
-        self.player_y = SCREEN_HEIGHT - 100
+        self.player_y = 100
         self.player_health = self.player_max_health
         self.player_invulnerable = 0
-        
+
         self.bullets = []
         self.asteroids = []
         self.particles = []
-        self.powerups = []
-        
+
         self.score = 0
         self.level = 1
         self.game_time = 0
         self.asteroids_destroyed = 0
         self.shoot_timer = 0
         self.can_shoot = True
-        
-        self.canvas.delete("all")
-        
-    def on_key_press(self, event):
-        """Обработка нажатия клавиш"""
-        if not self.game_active:
-            return
-            
-        if event.keysym == "Left":
-            self.keys_pressed["left"] = True
-        elif event.keysym == "Right":
-            self.keys_pressed["right"] = True
-        elif event.keysym == "space":
-            self.keys_pressed["space"] = True
-        elif event.keysym == "Escape":
-            self.show_menu()
-            
-    def on_key_release(self, event):
-        """Обработка отпускания клавиш"""
-        if not self.game_active:
-            return
-            
-        if event.keysym == "Left":
-            self.keys_pressed["left"] = False
-        elif event.keysym == "Right":
-            self.keys_pressed["right"] = False
-        elif event.keysym == "space":
-            self.keys_pressed["space"] = False
-            self.can_shoot = True  
-    
-    def draw_stars(self):
-        """Рисование фоновых звезд"""
-        self.canvas.delete("stars")
-        for _ in range(100):
-            x = random.randint(0, SCREEN_WIDTH)
-            y = random.randint(0, SCREEN_HEIGHT)
-            size = random.randint(1, 3)
-            brightness = random.randint(100, 255)
-            color = f"#{brightness:02x}{brightness:02x}{brightness:02x}"
-            self.canvas.create_oval(x-size, y-size, x+size, y+size, 
-                                   fill=color, outline=color, tags="stars")
-    
-    def game_loop(self):
-        """Основной игровой цикл"""
-        if self.game_active:
-            self.update_game()
+
+        self.left_pressed = False
+        self.right_pressed = False
+        self.space_pressed = False
+
+
+    def on_draw(self):
+        self.clear()
+        if self.game_state == "MENU":
+            self.draw_menu()
+        elif self.game_state == "PLAYING":
             self.draw_game()
-        elif self.in_menu:
-            pass
-        elif self.game_over:
+        elif self.game_state == "GAME_OVER":
             self.draw_game_over()
-        
-        self.root.after(16, self.game_loop)
-    
-    def update_game(self):
-        """Обновление игровой логики"""
-        if self.keys_pressed["left"] and self.player_x > self.player_width//2:
-            self.player_x -= PLAYER_SPEED
-        if self.keys_pressed["right"] and self.player_x < SCREEN_WIDTH - self.player_width//2:
-            self.player_x += PLAYER_SPEED
-        
-        if self.player_invulnerable > 0:
-            self.player_invulnerable -= 1
-        
-        if self.keys_pressed["space"] and self.can_shoot:
-            if len(self.bullets) < 15:  
-                self.bullets.append({
-                    "x": self.player_x,
-                    "y": self.player_y - self.player_height//2,
-                    "speed": BULLET_SPEED
-                })
-                self.can_shoot = False
-                self.shoot_timer = self.shoot_delay
-        
 
-        if not self.can_shoot:
-            self.shoot_timer -= 1
-            if self.shoot_timer <= 0:
-                self.can_shoot = True
-        
-        for bullet in self.bullets[:]:
-            bullet["y"] -= bullet["speed"]
-            if bullet["y"] < -20:
-                self.bullets.remove(bullet)
-        
-        if random.random() < 0.02 + self.level * 0.005:
-            self.asteroids.append({
-                "x": random.randint(50, SCREEN_WIDTH - 50),
-                "y": -50,
-                "size": random.randint(30, 60),
-                "speed_x": random.uniform(-2, 2),
-                "speed_y": random.uniform(2, 4),
-                "health": 2
-            })
-        
-        for asteroid in self.asteroids[:]:
-            asteroid["x"] += asteroid["speed_x"]
-            asteroid["y"] += asteroid["speed_y"]
-            
-            if asteroid["y"] > SCREEN_HEIGHT + 100:
-                self.asteroids.remove(asteroid)
-                continue
-            
-            # Столкновение с игроком
-            if self.player_invulnerable <= 0:
-                distance = math.sqrt((asteroid["x"] - self.player_x)**2 + 
-                                   (asteroid["y"] - self.player_y)**2)
-                if distance < (asteroid["size"]//2 + self.player_width//2):
-                    self.player_health -= 20
-                    self.player_invulnerable = 60
-                    self.asteroids.remove(asteroid)
-                    
-                    # Создание частиц при столкновении
-                    for _ in range(10):
-                        self.particles.append({
-                            "x": asteroid["x"],
-                            "y": asteroid["y"],
-                            "vx": random.uniform(-3, 3),
-                            "vy": random.uniform(-3, 3),
-                            "size": random.randint(2, 5),
-                            "color": "red",
-                            "life": 0.7,
-                            "age": 0
-                        })
-        
-        # Проверка столкновений пуль с астероидами
-        for bullet in self.bullets[:]:
-            for asteroid in self.asteroids[:]:
-                distance = math.sqrt((bullet["x"] - asteroid["x"])**2 + 
-                                   (bullet["y"] - asteroid["y"])**2)
-                if distance < asteroid["size"]//2:
-                    if bullet in self.bullets:
-                        self.bullets.remove(bullet)
-                    asteroid["health"] -= 1
-                    
-                    if asteroid["health"] <= 0:
-                        self.score += 10
-                        self.asteroids_destroyed += 1
-                        self.asteroids.remove(asteroid)
-                        
-                        # Создание частиц при уничтожении астероида
-                        for _ in range(15):
-                            self.particles.append({
-                                "x": asteroid["x"],
-                                "y": asteroid["y"],
-                                "vx": random.uniform(-4, 4),
-                                "vy": random.uniform(-4, 4),
-                                "size": random.randint(3, 6),
-                                "color": "orange",
-                                "life": 1.0,
-                                "age": 0
-                            })
-                    break
-        
-        # Обновление частиц
-        for particle in self.particles[:]:
-            particle["x"] += particle["vx"]
-            particle["y"] += particle["vy"]
-            particle["age"] += 0.016
-            
-            if particle["age"] >= particle["life"]:
-                self.particles.remove(particle)
-        
-        # Увеличение уровня со временем
-        self.game_time += 0.016
-        self.level = 1 + int(self.game_time // 30)
-        
-        # Проверка окончания игры
-        if self.player_health <= 0:
-            self.game_active = False
-            self.game_over = True
-            self.save_high_score()
-    
-    def draw_game(self):
-        """Отрисовка игры"""
-        self.canvas.delete("all")
-        
-        self.draw_stars()
-        
-        # Рисование игрока
-        color = "cyan" if (self.player_invulnerable > 0 and self.player_invulnerable % 10 < 5) else "blue"
-        points = [
-            self.player_x, self.player_y - self.player_height//2,
-            self.player_x - self.player_width//2, self.player_y + self.player_height//2,
-            self.player_x + self.player_width//2, self.player_y + self.player_height//2
+
+    def on_update(self, delta_time):
+        self.game_time += delta_time
+
+        for star in self.stars:
+            star.y -= STAR_SPEED
+            if star.y < 0:
+                star.y = SCREEN_HEIGHT
+                star.x = random.uniform(0, SCREEN_WIDTH)
+
+        if self.game_state == "PLAYING":
+            self.update_game(delta_time)
+
+
+    def draw_menu(self):
+        for star in self.stars:
+            star.draw(self.game_time)
+
+        arcade.draw_text("КОСМИЧЕСКИЙ ЗАЩИТНИК",
+                        SCREEN_WIDTH // 2, SCREEN_HEIGHT - 150,
+                        arcade.color.CYAN, 48,
+                        anchor_x="center",
+                        font_name="Arial", bold=True)
+
+        arcade.draw_text("Защищайте Землю от астероидов!",
+                        SCREEN_WIDTH // 2, SCREEN_HEIGHT - 220,
+                        arcade.color.YELLOW, 24,
+                        anchor_x="center", font_name="Arial")
+
+        arcade.draw_text(f"РЕКОРД: {self.high_score}",
+                        SCREEN_WIDTH // 2, SCREEN_HEIGHT - 270,
+                        arcade.color.GOLD, 28,
+                        anchor_x="center", font_name="Arial", bold=True)
+
+        controls = [
+            "УПРАВЛЕНИЕ:",
+            "← → - Движение влево/вправо",
+            "ПРОБЕЛ - Стрельба",
+            "ESC - Выход в меню"
         ]
-        self.canvas.create_polygon(points, fill=color, outline="white", width=2)
 
-        # Рисование пуль
-        for bullet in self.bullets:
-            self.canvas.create_rectangle(
-                bullet["x"] - 3, bullet["y"] - 10,
-                bullet["x"] + 3, bullet["y"] + 10,
-                fill="yellow", outline="orange"
-            )
+        for i, text in enumerate(controls):
+            arcade.draw_text(text,
+                           SCREEN_WIDTH // 2, SCREEN_HEIGHT - 330 - i * 30,
+                           arcade.color.WHITE, 18,
+                           anchor_x="center", font_name="Arial")
 
-        # Рисование астероидов
-        for asteroid in self.asteroids:
-            self.canvas.create_oval(
-                asteroid["x"] - asteroid["size"]//2, asteroid["y"] - asteroid["size"]//2,
-                asteroid["x"] + asteroid["size"]//2, asteroid["y"] + asteroid["size"]//2,
-                fill="gray", outline="white"
-            )
+        arcade.draw_lrbt_rectangle_filled(
+            SCREEN_WIDTH // 2 - 100, SCREEN_WIDTH // 2 + 100, 150, 200, arcade.color.GREEN
+        )
+        arcade.draw_lrbt_rectangle_outline(
+            SCREEN_WIDTH // 2 - 100, SCREEN_WIDTH // 2 + 100, 150, 200, arcade.color.WHITE, 2
+        )
+        arcade.draw_text("НАЧАТЬ ИГРУ", SCREEN_WIDTH // 2, 175,
+                        arcade.color.WHITE, 20, anchor_x="center", anchor_y="center",
+                        font_name="Arial", bold=True)
 
-        # Рисование частиц
+        arcade.draw_text("Нажмите на кнопку или пробел для начала",
+                        SCREEN_WIDTH // 2, 120,
+                        arcade.color.LIGHT_BLUE, 16,
+                        anchor_x="center", font_name="Arial")
+
+
+    def draw_game(self):
+        for star in self.stars:
+            star.draw(self.game_time)
+
         for particle in self.particles:
-            alpha = int(255 * (1 - particle["age"] / particle["life"]))
-            if alpha > 0:
-                color = particle["color"]
-                if color == "orange":
-                    r, g, b = 255, 165, 0
-                else:  # red
-                    r, g, b = 255, 50, 50
-                
-                r = int(r * alpha / 255)
-                g = int(g * alpha / 255)
-                b = int(b * alpha / 255)
-                color_str = f"#{r:02x}{g:02x}{b:02x}"
-                
-                self.canvas.create_oval(
-                    particle["x"] - particle["size"], particle["y"] - particle["size"],
-                    particle["x"] + particle["size"], particle["y"] + particle["size"],
-                    fill=color_str, outline=""
-                )
-        
-        # Интерфейс
-        # Здоровье
+            particle.draw()
+
+        for bullet in self.bullets:
+            bullet.draw()
+
+        for asteroid in self.asteroids:
+            asteroid.draw()
+
+        if self.player_invulnerable > 0 and (self.player_invulnerable // 3) % 2 == 0:
+            color = arcade.color.CYAN
+        else:
+            color = arcade.color.BLUE
+
+        points = [
+            (self.player_x, self.player_y + self.player_height // 2),
+            (self.player_x - self.player_width // 2, self.player_y - self.player_height // 2),
+            (self.player_x + self.player_width // 2, self.player_y - self.player_height // 2)
+        ]
+        arcade.draw_polygon_filled(points, color)
+        arcade.draw_polygon_outline(points, arcade.color.WHITE, 2)
+
+        self.draw_ui()
+
+
+    def draw_ui(self):
         health_width = 300 * (self.player_health / self.player_max_health)
-        self.canvas.create_rectangle(50, 30, 350, 55, fill="darkred", outline="")
-        self.canvas.create_rectangle(50, 30, 50 + health_width, 55, fill="green", outline="")
-        self.canvas.create_rectangle(50, 30, 350, 55, outline="white", width=2)
-        
-        self.canvas.create_text(200, 43, text=f"ЗДОРОВЬЕ: {self.player_health}", 
-                               font=("Arial", 14, "bold"), fill="white")
-        
-        # Счет и рекорд
-        self.canvas.create_text(SCREEN_WIDTH - 150, 30, text=f"СЧЁТ: {self.score}", 
-                               font=("Arial", 20, "bold"), fill="white")
-        
-        self.canvas.create_text(SCREEN_WIDTH - 150, 60, text=f"РЕКОРД: {self.high_score}", 
-                               font=("Arial", 16, "bold"), fill="gold")
-        
-        # Уровень и статистика
-        self.canvas.create_text(SCREEN_WIDTH // 2, 30, text=f"УРОВЕНЬ: {self.level}", 
-                               font=("Arial", 20, "bold"), fill="cyan")
-        
+        arcade.draw_lrbt_rectangle_filled(
+            50, 350, SCREEN_HEIGHT - 42, SCREEN_HEIGHT - 17, arcade.color.DARK_RED
+        )
+        arcade.draw_lrbt_rectangle_filled(
+            50, 50 + health_width, SCREEN_HEIGHT - 42, SCREEN_HEIGHT - 17, arcade.color.GREEN
+        )
+        arcade.draw_lrbt_rectangle_outline(
+            50, 350, SCREEN_HEIGHT - 42, SCREEN_HEIGHT - 17, arcade.color.WHITE, 2
+        )
+
+        arcade.draw_text(f"ЗДОРОВЬЕ: {self.player_health}",
+                        200, SCREEN_HEIGHT - 30,
+                        arcade.color.WHITE, 14, anchor_x="center", anchor_y="center",
+                        font_name="Arial", bold=True)
+
+        arcade.draw_text(f"СЧЁТ: {self.score}",
+                        SCREEN_WIDTH - 150, SCREEN_HEIGHT - 30,
+                        arcade.color.WHITE, 20, anchor_x="center", anchor_y="center",
+                        font_name="Arial", bold=True)
+
+        arcade.draw_text(f"РЕКОРД: {self.high_score}",
+                        SCREEN_WIDTH - 150, SCREEN_HEIGHT - 60,
+                        arcade.color.GOLD, 16, anchor_x="center", anchor_y="center",
+                        font_name="Arial", bold=True)
+
+        arcade.draw_text(f"УРОВЕНЬ: {self.level}",
+                        SCREEN_WIDTH // 2, SCREEN_HEIGHT - 30,
+                        arcade.color.CYAN, 20, anchor_x="center", anchor_y="center",
+                        font_name="Arial", bold=True)
+
         minutes = int(self.game_time) // 60
         seconds = int(self.game_time) % 60
-        self.canvas.create_text(SCREEN_WIDTH // 2, 60, 
-                               text=f"ВРЕМЯ: {minutes:02d}:{seconds:02d} | АСТЕРОИДОВ: {self.asteroids_destroyed}", 
-                               font=("Arial", 14), fill="white")
-        
-        # Предупреждение о низком здоровье
-        if self.player_health < 30:
-            flash = int(time.time() * 5) % 2
-            if flash:
-                self.canvas.create_text(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, 
-                                       text="ОПАСНО! НИЗКОЕ ЗДОРОВЬЕ!", 
-                                       font=("Arial", 24, "bold"), fill="red")
-    
+        time_text = f"ВРЕМЯ: {minutes:02d}:{seconds:02d} | АСТЕРОИДОВ: {self.asteroids_destroyed}"
+        arcade.draw_text(time_text,
+                        SCREEN_WIDTH // 2, SCREEN_HEIGHT - 60,
+                        arcade.color.WHITE, 14, anchor_x="center", anchor_y="center",
+                        font_name="Arial")
+
+        if self.player_health < 30 and (int(self.game_time * 5) % 2 == 0):
+            arcade.draw_text("ОПАСНО! НИЗКОЕ ЗДОРОВЬЕ!",
+                           SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2,
+                           arcade.color.RED, 24, anchor_x="center", anchor_y="center",
+                           font_name="Arial", bold=True)
+
+
     def draw_game_over(self):
-        """Отрисовка экрана окончания игры"""
-        self.canvas.delete("all")
-        
-        self.draw_stars()
-        
-        # Полупрозрачный фон
-        self.canvas.create_rectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 
-                                   fill="black", stipple="gray50")
-        
-        # Анимация падающих букв
-        for i in range(20):
-            x = random.randint(0, SCREEN_WIDTH)
-            y = random.randint(0, SCREEN_HEIGHT)
-            size = random.randint(20, 40)
-            self.canvas.create_text(x, y, text="✸", 
-                                  font=("Arial", size), fill="cyan", 
-                                  tags="falling_star")
-        
-        # Основной текст
-        self.canvas.create_text(SCREEN_WIDTH // 2, 180, text="ИГРА ОКОНЧЕНА", 
-                               font=("Arial", 48, "bold"), fill="red")
-        
-        self.canvas.create_text(SCREEN_WIDTH // 2, 250, text=f"ВАШ СЧЁТ: {self.score}", 
-                               font=("Arial", 36), fill="white")
-        
-        # Проверка нового рекорда
+        for star in self.stars:
+            star.draw(self.game_time)
+
+        arcade.draw_lrbt_rectangle_filled(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT, (0, 0, 0, 128))
+
+        for i in range(30):
+            x = random.uniform(0, SCREEN_WIDTH)
+            y = random.uniform(0, SCREEN_HEIGHT)
+            size = random.uniform(20, 40)
+            arcade.draw_text("★", x, y,
+                           arcade.color.CYAN, size,
+                           anchor_x="center", anchor_y="center")
+
+        arcade.draw_text("ИГРА ОКОНЧЕНА",
+                        SCREEN_WIDTH // 2, SCREEN_HEIGHT - 180,
+                        arcade.color.RED, 48, anchor_x="center",
+                        font_name="Arial", bold=True)
+
+        arcade.draw_text(f"ВАШ СЧЁТ: {self.score}",
+                        SCREEN_WIDTH // 2, SCREEN_HEIGHT - 250,
+                        arcade.color.WHITE, 36, anchor_x="center",
+                        font_name="Arial")
+
         if self.score > self.high_score:
-            self.canvas.create_text(SCREEN_WIDTH // 2, 300, 
-                                   text="НОВЫЙ РЕКОРД!", 
-                                   font=("Arial", 32, "bold"), 
-                                   fill="gold")
-        
-        # Статистика
+            arcade.draw_text("НОВЫЙ РЕКОРД!",
+                           SCREEN_WIDTH // 2, SCREEN_HEIGHT - 300,
+                           arcade.color.GOLD, 32, anchor_x="center",
+                           font_name="Arial", bold=True)
+
         stats = [
             f"Уничтожено астероидов: {self.asteroids_destroyed}",
             f"Прожито времени: {int(self.game_time)} сек",
             f"Достигнутый уровень: {self.level}"
         ]
-        
-        for i, stat in enumerate(stats):
-            self.canvas.create_text(SCREEN_WIDTH // 2, 350 + i*30,
-                                   text=stat,
-                                   font=("Arial", 18),
-                                   fill="lightblue")
-        
-        # Кнопки (создаем один раз)
-        if not self.restart_button:
-            self.restart_button = tk.Button(self.main_frame, 
-                                           text="НОВАЯ ИГРА", 
-                                           font=("Arial", 20, "bold"),
-                                           bg="green", fg="white",
-                                           command=self.start_game,
-                                           cursor="hand2")
-        
-        if not self.menu_button:
-            self.menu_button = tk.Button(self.main_frame, 
-                                        text="В МЕНЮ", 
-                                        font=("Arial", 16),
-                                        bg="blue", fg="white",
-                                        command=self.show_menu,
-                                        cursor="hand2")
-        
-        self.restart_button.place(x=SCREEN_WIDTH//2 - 100, y=450, width=200, height=50)
-        self.menu_button.place(x=SCREEN_WIDTH//2 - 100, y=520, width=200, height=40)
-    
-    def run(self):
-        """Запуск игры"""
-        self.root.mainloop()
 
-if __name__ == "__main__":
+        for i, stat in enumerate(stats):
+            arcade.draw_text(stat,
+                           SCREEN_WIDTH // 2, SCREEN_HEIGHT - 350 - i * 30,
+                           arcade.color.LIGHT_BLUE, 18, anchor_x="center",
+                           font_name="Arial")
+
+        arcade.draw_lrbt_rectangle_filled(
+            SCREEN_WIDTH // 2 - 100, SCREEN_WIDTH // 2 + 100, 150, 200, arcade.color.GREEN
+        )
+        arcade.draw_lrbt_rectangle_outline(
+            SCREEN_WIDTH // 2 - 100, SCREEN_WIDTH // 2 + 100, 150, 200, arcade.color.WHITE, 2
+        )
+        arcade.draw_text("НОВАЯ ИГРА", SCREEN_WIDTH // 2, 175,
+                        arcade.color.WHITE, 20, anchor_x="center", anchor_y="center",
+                        font_name="Arial", bold=True)
+
+        arcade.draw_lrbt_rectangle_filled(
+            SCREEN_WIDTH // 2 - 100, SCREEN_WIDTH // 2 + 100, 100, 150, arcade.color.BLUE
+        )
+        arcade.draw_lrbt_rectangle_outline(
+            SCREEN_WIDTH // 2 - 100, SCREEN_WIDTH // 2 + 100, 100, 150, arcade.color.WHITE, 2
+        )
+        arcade.draw_text("В МЕНЮ", SCREEN_WIDTH // 2, 125,
+                        arcade.color.WHITE, 16, anchor_x="center", anchor_y="center",
+                        font_name="Arial")
+
+        arcade.draw_text("Нажмите R для новой игры или ESC для выхода в меню",
+                        SCREEN_WIDTH // 2, 70,
+                        arcade.color.LIGHT_BLUE, 16, anchor_x="center",
+                        font_name="Arial")
+
+
+    def update_game(self, delta_time):
+        if self.left_pressed and self.player_x > self.player_width // 2:
+            self.player_x -= PLAYER_SPEED
+        if self.right_pressed and self.player_x < SCREEN_WIDTH - self.player_width // 2:
+            self.player_x += PLAYER_SPEED
+
+        if self.player_invulnerable > 0:
+            self.player_invulnerable -= 1
+
+        if self.space_pressed and self.can_shoot and len(self.bullets) < MAX_BULLETS:
+            bullet = Bullet(self.player_x, self.player_y + self.player_height // 2, BULLET_SPEED)
+            self.bullets.append(bullet)
+            self.can_shoot = False
+            self.shoot_timer = SHOOT_DELAY
+
+        if not self.can_shoot:
+            self.shoot_timer -= delta_time
+            if self.shoot_timer <= 0:
+                self.can_shoot = True
+
+        bullets_to_remove = []
+        for bullet in self.bullets:
+            bullet.update()
+            if bullet.y > SCREEN_HEIGHT + 20:
+                bullets_to_remove.append(bullet)
+        for bullet in bullets_to_remove:
+            if bullet in self.bullets:
+                self.bullets.remove(bullet)
+
+        spawn_chance = 0.02 + self.level * 0.005
+        if random.random() < spawn_chance:
+            asteroid = Asteroid(
+                random.uniform(50, SCREEN_WIDTH - 50),
+                SCREEN_HEIGHT + 50,
+                random.uniform(30, 60),
+                random.uniform(-2, 2),
+                random.uniform(-4, -2)
+            )
+            self.asteroids.append(asteroid)
+
+        asteroids_to_remove = []
+        for asteroid in self.asteroids:
+            asteroid.update()
+
+            if asteroid.y < -100:
+                asteroids_to_remove.append(asteroid)
+                continue
+
+            if self.player_invulnerable <= 0:
+                if asteroid.collides_with(self.player_x, self.player_y, self.player_width // 2):
+                    self.player_health -= 20
+                    self.player_invulnerable = 60
+                    asteroids_to_remove.append(asteroid)
+
+                    for _ in range(10):
+                        particle = Particle(
+                            asteroid.x,
+                            asteroid.y,
+                            random.uniform(-3, 3),
+                            random.uniform(-3, 3),
+                            random.uniform(2, 5),
+                            (255, 50, 50),
+                            0.7
+                        )
+                        self.particles.append(particle)
+
+            bullets_to_remove = []
+            for bullet in self.bullets:
+                if asteroid.collides_with(bullet.x, bullet.y, 3):
+                    bullets_to_remove.append(bullet)
+                    asteroid.health -= 1
+
+                    if asteroid.health <= 0:
+                        self.score += 10
+                        self.asteroids_destroyed += 1
+                        asteroids_to_remove.append(asteroid)
+
+                        for _ in range(15):
+                            particle = Particle(
+                                asteroid.x,
+                                asteroid.y,
+                                random.uniform(-4, 4),
+                                random.uniform(-4, 4),
+                                random.uniform(3, 6),
+                                (255, 165, 0),
+                                1.0
+                            )
+                            self.particles.append(particle)
+
+            for bullet in bullets_to_remove:
+                if bullet in self.bullets:
+                    self.bullets.remove(bullet)
+
+        for asteroid in asteroids_to_remove:
+            if asteroid in self.asteroids:
+                self.asteroids.remove(asteroid)
+
+        particles_to_remove = []
+        for particle in self.particles:
+            particle.update(delta_time)
+            if not particle.is_alive():
+                particles_to_remove.append(particle)
+        for particle in particles_to_remove:
+            if particle in self.particles:
+                self.particles.remove(particle)
+
+        self.level = 1 + int(self.game_time // 30)
+
+        if self.player_health <= 0:
+            self.game_state = "GAME_OVER"
+            self.save_high_score()
+
+
+    def on_key_press(self, key, modifiers):
+        if self.game_state == "MENU":
+            if key == arcade.key.SPACE or key == arcade.key.ENTER:
+                self.start_game()
+            elif key == arcade.key.ESCAPE:
+                arcade.close_window()
+
+        elif self.game_state == "PLAYING":
+            if key == arcade.key.LEFT:
+                self.left_pressed = True
+            elif key == arcade.key.RIGHT:
+                self.right_pressed = True
+            elif key == arcade.key.SPACE:
+                self.space_pressed = True
+            elif key == arcade.key.ESCAPE:
+                self.game_state = "MENU"
+                self.setup()
+
+        elif self.game_state == "GAME_OVER":
+            if key == arcade.key.R:
+                self.start_game()
+            elif key == arcade.key.ESCAPE:
+                self.game_state = "MENU"
+                self.setup()
+
+
+    def on_key_release(self, key, modifiers):
+        if self.game_state == "PLAYING":
+            if key == arcade.key.LEFT:
+                self.left_pressed = False
+            elif key == arcade.key.RIGHT:
+                self.right_pressed = False
+            elif key == arcade.key.SPACE:
+                self.space_pressed = False
+
+
+    def on_mouse_press(self, x, y, button, modifiers):
+        if button == arcade.MOUSE_BUTTON_LEFT:
+            if self.game_state == "MENU":
+                if (SCREEN_WIDTH // 2 - 100 <= x <= SCREEN_WIDTH // 2 + 100 and
+                    150 <= y <= 200):
+                    self.start_game()
+
+            elif self.game_state == "GAME_OVER":
+                if (SCREEN_WIDTH // 2 - 100 <= x <= SCREEN_WIDTH // 2 + 100 and
+                    150 <= y <= 200):
+                    self.start_game()
+                elif (SCREEN_WIDTH // 2 - 100 <= x <= SCREEN_WIDTH // 2 + 100 and
+                      100 <= y <= 150):
+                    self.game_state = "MENU"
+                    self.setup()
+
+
+def main():
+    print("=" * 50)
+    print("КОСМИЧЕСКИЙ ЗАЩИТНИК")
     print("=" * 50)
     print("Управление:")
-    print("1. Нажмите на кнопку 'НАЧАТЬ ИГРУ'")
-    print("2. Управление: ← → для движения, ПРОБЕЛ для стрельбы")
+    print("1. В меню: нажмите на кнопку или ПРОБЕЛ для начала")
+    print("2. Игра: ← → для движения, ПРОБЕЛ для стрельбы")
     print("3. ESC для выхода в меню")
+    print("4. В конце игры: R - новая игра, ESC - в меню")
     print("=" * 50)
-    
-    game = Game()
-    game.run()
+
+    game = SpaceDefender()
+    game.setup()
+    arcade.run()
+
+
+if __name__ == "__main__":
+    main()
